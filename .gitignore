@@ -1,0 +1,28 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+*.spec.bak
+
+# Runtime data
+logs/
+output/
+data/
+*.log
+
+# Local backups
+*.backup
+*.bak
+*.before_refactor_*.bak
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
