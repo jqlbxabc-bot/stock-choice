@@ -206,6 +206,94 @@ def signal_stats(rows):
         "d5":collect(["return_5d","5日收益","5d_return"]),
     }
 
+
+def row_pnl_pct(r):
+    return num(r.get("pnl_pct") or r.get("盈亏%") or r.get("收益率"))
+
+def row_cash_pnl(r):
+    return num(r.get("fifo_pnl") or r.get("盈亏金额") or r.get("净盈亏") or r.get("pnl"))
+
+def behavior_flags(r):
+    flags=[]
+    buy_count=intval(r.get("buy_count_in_round") or r.get("买入次数"))
+    holding_days=intval(r.get("holding_days") or r.get("持有天数"))
+    below=truthy(r.get("below_cost_add")) or truthy(r.get("亏损补仓"))
+    if below: flags.append("亏损后补仓")
+    if buy_count>=3: flags.append("第3次及以后买入")
+    if holding_days>=4: flags.append("持仓≥4天未复核")
+    if truthy(r.get("是否违规")) or bool(str(r.get("violation_type") or "").strip()) or str(r.get("behavior_risk_state") or "") in {"B3","B4"}:
+        flags.append("违反既定规则")
+    planned=num(r.get("planned_position_pct") or r.get("计划仓位%"))
+    actual=num(r.get("actual_position_pct") or r.get("实际仓位%"))
+    if planned is not None and actual is not None and actual>planned+0.01:
+        flags.append("实际仓位超计划")
+    return list(dict.fromkeys(flags))
+
+def behavior_ranking(rows):
+    buckets={}
+    for r in rows[-500:]:
+        cash=row_cash_pnl(r)
+        pp=row_pnl_pct(r)
+        for flag in behavior_flags(r):
+            b=buckets.setdefault(flag,{"behavior":flag,"count":0,"cash_pnl":0.0,"cash_samples":0,"pct_sum":0.0,"pct_samples":0})
+            b["count"]+=1
+            if cash is not None:
+                b["cash_pnl"]+=cash; b["cash_samples"]+=1
+            if pp is not None:
+                b["pct_sum"]+=pp; b["pct_samples"]+=1
+    out=[]
+    for b in buckets.values():
+        out.append({
+            "behavior":b["behavior"],
+            "count":b["count"],
+            "cash_pnl":round(b["cash_pnl"],2) if b["cash_samples"] else None,
+            "avg_pnl_pct":round(b["pct_sum"]/b["pct_samples"],2) if b["pct_samples"] else None,
+            "cash_samples":b["cash_samples"],
+        })
+    out.sort(key=lambda x:(x["cash_pnl"] if x["cash_pnl"] is not None else 10**18,-x["count"]))
+    return out[:6]
+
+def execution_score(r):
+    s=100
+    flags=behavior_flags(r)
+    if "亏损后补仓" in flags: s-=40
+    if "第3次及以后买入" in flags: s-=25
+    if "持仓≥4天未复核" in flags: s-=15
+    if "违反既定规则" in flags: s-=25
+    if "实际仓位超计划" in flags: s-=10
+    explicit=str(r.get("rule_satisfied") or r.get("买入前规则是否满足") or "").strip().lower()
+    if explicit in {"false","0","否","不满足"}: s-=20
+    return max(0,min(100,s)),flags
+
+def execution_quality(rows):
+    out=[]
+    for r in rows[-20:]:
+        s,flags=execution_score(r)
+        pnl=row_pnl_pct(r)
+        if s>=85: grade="A"
+        elif s>=70: grade="B"
+        elif s>=55: grade="C"
+        else: grade="D"
+        if pnl is not None and pnl<0 and s>=80:
+            kind="好交易但亏钱"
+        elif pnl is not None and pnl>0 and s<60:
+            kind="坏交易碰巧赚钱"
+        elif pnl is None:
+            kind="待结果"
+        else:
+            kind="过程与结果一致"
+        out.append({
+            "date":str(r.get("date") or r.get("日期") or r.get("成交日期") or r.get("trade_date") or "")[:10],
+            "stock":stock_name(r),
+            "code":stock_code(r),
+            "score":s,
+            "grade":grade,
+            "pnl_pct":round(pnl,2) if pnl is not None else None,
+            "classification":kind,
+            "issues":" / ".join(flags) if flags else "无明确违规",
+        })
+    return list(reversed(out))
+
 def write_payload(payload):
     text=json.dumps(payload,ensure_ascii=False,indent=2)
     for folder in (DASH,DOCS):
@@ -282,6 +370,8 @@ def build():
         "signal_stats":sigstats,
         "daily_pnl":metrics["daily_pnl"],
         "weekly_pnl":metrics["weekly_pnl"],
+        "behavior_ranking":behavior_ranking(trades),
+        "execution_quality":execution_quality(trades),
     }
     write_payload(payload)
     print("updated: dashboard/data.json + docs/data.json")
