@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>A股交易助手 · 云端看板</title>
+<style>
+:root{--bg:#0b1020;--card:#151b2e;--card2:#0f1526;--text:#edf2f7;--muted:#98a2b3;--line:#26314a;--good:#38d996;--warn:#ffbe55;--bad:#ff6b6b;--blue:#6ea8fe}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(180deg,#09101d,#10182a 45%,#0b1020);color:var(--text)}
+.wrap{max-width:1180px;margin:auto;padding:20px}.top{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.title h1{font-size:24px;margin:0 0 5px}.sub{color:var(--muted);font-size:13px}
+.badge{padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:#11182a;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin-top:15px}.card{background:rgba(21,27,46,.94);border:1px solid var(--line);border-radius:15px;padding:15px}.kpi{grid-column:span 3}.wide{grid-column:span 8}.side{grid-column:span 4}.half{grid-column:span 6}.full{grid-column:1/-1}
+.label{font-size:12px;color:var(--muted)}.value{font-size:29px;font-weight:750;margin-top:5px}.small{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.55}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.blue{color:var(--blue)}
+h2{font-size:16px;margin:0 0 11px}.row{display:grid;grid-template-columns:1.3fr .8fr 1fr 1.2fr;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--line);font-size:13px}.row:first-of-type{border-top:0}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#202b44;font-size:12px}.rule{padding:10px 0;border-top:1px solid var(--line)}.rule:first-of-type{border-top:0}.rule b{font-size:14px}.bar{height:8px;background:#222d45;border-radius:999px;overflow:hidden;margin-top:7px}.fill{height:100%;background:linear-gradient(90deg,#6ea8fe,#38d996)}.dangerfill{background:linear-gradient(90deg,#ffbe55,#ff6b6b)}
+.notice{border-left:3px solid var(--warn);padding:9px 11px;background:#171b28;border-radius:7px;color:#d9dfeb;font-size:13px;line-height:1.6}
+.footer{color:var(--muted);font-size:12px;margin:18px 0 4px}
+@media(max-width:820px){.kpi,.wide,.side,.half{grid-column:1/-1}.row{grid-template-columns:1fr 1fr}.value{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="title">
+      <h1>A股交易助手 · 云端看板</h1>
+      <div class="sub">目标：少推荐、强验证、先管执行。辅助决策，不自动下单。</div>
+    </div>
+    <div class="badge" id="freshness">正在读取数据…</div>
+  </div>
+
+  <div class="grid">
+    <div class="card kpi"><div class="label">今日交易总开关</div><div class="value warn" id="tradeGate">灰灯</div><div class="small" id="gateNote">等待有效数据</div></div>
+    <div class="card kpi"><div class="label">市场状态</div><div class="value warn" id="marketState">M0</div><div class="small" id="marketNote">等待有效盘面数据</div></div>
+    <div class="card kpi"><div class="label">持仓风险</div><div class="value" id="riskCount">—</div><div class="small">只统计明确触发的规则</div></div>
+    <div class="card kpi"><div class="label">重点候选</div><div class="value" id="candidateCount">0</div><div class="small">上限 5 只，避免候选泛滥</div></div>
+    <div class="card kpi"><div class="label">本周违规</div><div class="value" id="violationCount">—</div><div class="small">优先看重复行为，不看“忙不忙”</div></div>
+    <div class="card kpi"><div class="label">连续亏损</div><div class="value" id="lossStreak">—</div><div class="small">达到阈值时自动降级交易权限</div></div>
+
+    <div class="card wide">
+      <h2>今日动作面板</h2>
+      <div id="actions"><div class="notice">暂无新鲜盘面或持仓数据。云端看板不会用历史缓存冒充今天的交易信号。</div></div>
+    </div>
+    <div class="card side">
+      <h2>今天最重要的禁止动作</h2>
+      <div class="rule"><b class="bad">亏损后临时补仓</b><div class="small">“便宜了 / 摊低成本”本身不构成加仓理由。</div></div>
+      <div class="rule"><b class="warn">第 3 次买入前不复核</b><div class="small">首次建仓 + 最多一次计划内加仓；再买必须重审原逻辑和最大损失预算。</div></div>
+      <div class="rule"><b>持仓超过 4 天不复核</b><div class="small">加仓不能重置计时；不能把“等回本”当新逻辑。</div></div>
+    </div>
+
+    <div class="card half">
+      <h2>历史行为基线 · 2026-06-01 至 2026-09-04</h2>
+      <div class="rule"><b>含低价补仓的完整回合</b><div class="small">250 个回合 · 亏损率 <span class="bad">54.4%</span> · 费用前价差 <span class="bad">-79,391.20 元</span></div><div class="bar"><div class="fill dangerfill" style="width:54.4%"></div></div></div>
+      <div class="rule"><b>不含该行为的其他完整回合</b><div class="small">370 个回合 · 亏损率 29.5% · 费用前价差 <span class="good">+66,738.56 元</span></div><div class="bar"><div class="fill" style="width:29.5%"></div></div></div>
+      <div class="rule"><b>买入 4 次及以上</b><div class="small">193 个回合 · 亏损率 48.7% · 费用前价差 <span class="bad">-48,259.30 元</span></div></div>
+    </div>
+
+    <div class="card half">
+      <h2>20 笔交易行为实验</h2>
+      <div class="small">首轮只验证流程是否改善，不用小样本宣称策略已有效。</div>
+      <div class="rule"><b>实验进度</b><div class="small" id="experimentProgress">等待新成交记录</div><div class="bar"><div class="fill" id="experimentBar" style="width:0%"></div></div></div>
+      <div class="rule"><b>本轮观察指标</b><div class="small">违规补仓次数 · 第3次及以后买入 · 到期未复核回合 · 费用后盈亏 · 平均盈利 / 平均亏损</div></div>
+    </div>
+
+    <div class="card full">
+      <h2>复盘 / 验证队列</h2>
+      <div class="row"><b>项目</b><b>状态</b><b>窗口</b><b>下一步</b></div>
+      <div id="queue">
+        <div class="row"><span>信号结果跟踪</span><span class="pill">等待数据</span><span>1 / 3 / 5 日</span><span>有成熟样本后更新</span></div>
+        <div class="row"><span>执行归因</span><span class="pill">等待成交</span><span>逐笔</span><span>对齐信号与真实成交</span></div>
+        <div class="row"><span>周末流程复盘</span><span class="pill">固定</span><span>每周</span><span>只选一个下周流程改进</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">数据安全规则：过期数据只用于复盘，不生成交易型动作；所有“继续盯 / 等待 / 放弃 / 风险”均为辅助决策标签。</div>
+</div>
+<script>
+fetch('./data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+  const q=id=>document.getElementById(id);
+  q('freshness').textContent='数据状态：'+(d.data_freshness||'未知');
+  q('tradeGate').textContent=d.trade_gate||'灰灯';
+  q('gateNote').textContent=d.gate_note||'等待有效数据';
+  q('lossStreak').textContent=d.loss_streak ?? '—';
+  q('marketState').textContent=d.market_state||'M0';
+  q('marketNote').textContent=d.market_note||'';
+  q('riskCount').textContent=d.holding_risk_count ?? '—';
+  q('candidateCount').textContent=(d.actions||[]).length;
+  q('violationCount').textContent=d.week_violations ?? '—';
+  const a=q('actions');
+  if((d.actions||[]).length){
+    a.innerHTML='<div class="row"><b>股票</b><b>状态</b><b>触发条件</b><b>失效条件</b></div>'+d.actions.map(x=>`<div class="row"><span>${x.stock}</span><span class="pill">${x.state}</span><span>${x.trigger||'—'}</span><span>${x.invalidate||'—'}</span></div>`).join('');
+  }
+  const done=d.experiment_done||0,total=d.experiment_total||20,p=Math.min(100,Math.round(done/total*100));
+  q('experimentProgress').textContent=done+' / '+total+' 笔';
+  q('experimentBar').style.width=p+'%';
+}).catch(()=>{document.getElementById('freshness').textContent='数据状态：读取失败';});
+</script>
+</body></html>
