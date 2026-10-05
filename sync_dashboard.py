@@ -43,6 +43,9 @@ def first_existing(candidates):
     return max(found,key=lambda p:p.stat().st_mtime) if found else None
 
 def latest_json():
+    realtime = EXPORTS / "latest_realtime_candidates.json"
+    if realtime.exists():
+        return realtime
     if not OUTPUT.exists():
         return None
     files=sorted([p for p in OUTPUT.glob("*.json") if p.is_file()],key=lambda p:p.stat().st_mtime,reverse=True)
@@ -310,7 +313,8 @@ def build():
     if latest:
         source_time=datetime.fromtimestamp(latest.stat().st_mtime)
         fresh=(now-source_time)<=timedelta(minutes=FRESH_MINUTES)
-        rows=load_list(latest)
+        raw = json.loads(latest.read_text(encoding="utf-8"))
+        rows = raw.get("candidates", []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
 
     rows=sorted(rows,key=score,reverse=True)[:MAX_CANDIDATES]
 
