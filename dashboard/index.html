@@ -28,10 +28,12 @@ h2{font-size:16px;margin:0 0 11px}.row{display:grid;grid-template-columns:1.3fr 
   </div>
 
   <div class="grid">
+    <div class="card kpi"><div class="label">今日交易总开关</div><div class="value warn" id="tradeGate">灰灯</div><div class="small" id="gateNote">等待有效数据</div></div>
     <div class="card kpi"><div class="label">市场状态</div><div class="value warn" id="marketState">M0</div><div class="small" id="marketNote">等待有效盘面数据</div></div>
     <div class="card kpi"><div class="label">持仓风险</div><div class="value" id="riskCount">—</div><div class="small">只统计明确触发的规则</div></div>
     <div class="card kpi"><div class="label">重点候选</div><div class="value" id="candidateCount">0</div><div class="small">上限 5 只，避免候选泛滥</div></div>
     <div class="card kpi"><div class="label">本周违规</div><div class="value" id="violationCount">—</div><div class="small">优先看重复行为，不看“忙不忙”</div></div>
+    <div class="card kpi"><div class="label">连续亏损</div><div class="value" id="lossStreak">—</div><div class="small">达到阈值时自动降级交易权限</div></div>
 
     <div class="card wide">
       <h2>今日动作面板</h2>
@@ -74,6 +76,9 @@ h2{font-size:16px;margin:0 0 11px}.row{display:grid;grid-template-columns:1.3fr 
 fetch('./data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
   const q=id=>document.getElementById(id);
   q('freshness').textContent='数据状态：'+(d.data_freshness||'未知');
+  q('tradeGate').textContent=d.trade_gate||'灰灯';
+  q('gateNote').textContent=d.gate_note||'等待有效数据';
+  q('lossStreak').textContent=d.loss_streak ?? '—';
   q('marketState').textContent=d.market_state||'M0';
   q('marketNote').textContent=d.market_note||'';
   q('riskCount').textContent=d.holding_risk_count ?? '—';
