@@ -210,3 +210,14 @@ adaptive_multifactor:
   chase_penalty_from: 5.5
   atr_max: 7.5
   ret20_min: -3.0
+
+
+# 盘中实时选股
+realtime:
+  enabled: true
+  refresh_seconds: 30
+  market_only: true
+  save_every_cycle: false
+  max_candidates: 5
+  change_score_threshold: 3.0
+  stale_seconds: 90
