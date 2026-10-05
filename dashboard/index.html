@@ -76,6 +76,18 @@ h2{font-size:16px;margin:0 0 11px}.row{display:grid;grid-template-columns:1.3fr 
       <div id="pnlChart" style="margin-top:10px"></div>
     </div>
 
+    <div class="card half">
+      <h2>最伤账户的行为排行榜</h2>
+      <div class="small">只统计成交记录中能明确识别的行为；没有金额证据时不强行归因。</div>
+      <div id="behaviorRanking"><div class="notice">等待可识别的成交行为数据</div></div>
+    </div>
+
+    <div class="card half">
+      <h2>最近20笔执行质量</h2>
+      <div class="small">执行分是纪律评分，不预测下一笔收益。A/B代表过程更规范，C/D代表流程偏离较多。</div>
+      <div id="executionQuality"><div class="notice">等待最近成交记录</div></div>
+    </div>
+
     <div class="card full">
       <h2>复盘 / 验证队列</h2>
       <div class="row"><b>项目</b><b>状态</b><b>窗口</b><b>下一步</b></div>
@@ -127,6 +139,16 @@ fetch('./data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
     }).join('')+'</div>';
   };
   chart.innerHTML=bars(daily,'pnl','最近30日')+bars(weekly,'pnl','最近12周');
+
+  const br=q('behaviorRanking'), ranks=d.behavior_ranking||[];
+  if(ranks.length){
+    br.innerHTML='<div class="row"><b>行为</b><b>次数</b><b>累计盈亏</b><b>平均收益%</b></div>'+ranks.map(x=>`<div class="row"><span>${x.behavior}</span><span>${x.count}</span><span class="${(x.cash_pnl??0)>=0?'good':'bad'}">${x.cash_pnl==null?'—':x.cash_pnl.toFixed(2)}</span><span>${x.avg_pnl_pct==null?'—':x.avg_pnl_pct+'%'}</span></div>`).join('');
+  }
+
+  const eq=q('executionQuality'), ex=d.execution_quality||[];
+  if(ex.length){
+    eq.innerHTML='<div class="row"><b>交易</b><b>执行分</b><b>结果</b><b>判定</b></div>'+ex.map(x=>`<div class="row"><span>${x.date||''} ${x.stock}${x.code?' '+x.code:''}<div class="small">${x.issues}</div></span><span class="${x.score>=80?'good':x.score>=60?'warn':'bad'}">${x.score} · ${x.grade}</span><span class="${(x.pnl_pct??0)>=0?'good':'bad'}">${x.pnl_pct==null?'—':x.pnl_pct+'%'}</span><span>${x.classification}</span></div>`).join('');
+  }
 
   const done=d.experiment_done||0,total=d.experiment_total||20,p=Math.min(100,Math.round(done/total*100));
   q('experimentProgress').textContent=done+' / '+total+' 笔';
