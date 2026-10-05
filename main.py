@@ -187,30 +187,62 @@ class DynamicStockSelector:
         ]
 
     def get_stock_data(self) -> pd.DataFrame | None:
-        """获取并标准化股票数据。"""
-        print("正在获取股票数据...")
-        try:
-            df = ak.stock_zh_a_spot()
-            df = self._normalize_stock_data(df)
-            self.stock_data = df
-            print(f"获取到 {len(df)} 只股票数据")
-            return df
-        except Exception as exc:
-            print(f"获取数据失败: {exc}")
-            return None
+        """获取并标准化A股实时快照；优先东方财富接口，失败时自动回退。"""
+        print("正在获取股票实时数据...")
+        errors = []
+        getters = [
+            ("eastmoney", getattr(ak, "stock_zh_a_spot_em", None)),
+            ("legacy", getattr(ak, "stock_zh_a_spot", None)),
+        ]
+        for source_name, getter in getters:
+            if getter is None:
+                continue
+            try:
+                df = getter()
+                df = self._normalize_stock_data(df)
+                self.stock_data = df
+                print(f"实时数据源={source_name}，获取到 {len(df)} 只股票")
+                return df
+            except Exception as exc:
+                errors.append(f"{source_name}: {exc}")
+        print("获取实时数据失败: " + " | ".join(errors))
+        return None
 
     def _normalize_stock_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """统一 akshare 返回列名与数值类型。"""
         if df.empty:
             raise ValueError("数据源返回空数据")
 
-        if df.columns[0] != "代码":
-            rename_map = {
+        # 优先使用显式列名；仅在完全无法识别时才回退到旧接口的位置映射。
+        aliases = {
+            "代码": ["代码", "股票代码"],
+            "名称": ["名称", "股票名称"],
+            "最新价": ["最新价", "现价"],
+            "涨跌幅": ["涨跌幅"],
+            "昨收": ["昨收"],
+            "今开": ["今开"],
+            "最高": ["最高"],
+            "最低": ["最低"],
+            "成交额": ["成交额"],
+        }
+        rename_map = {}
+        for target, candidates in aliases.items():
+            if target in df.columns:
+                continue
+            for src in candidates:
+                if src in df.columns:
+                    rename_map[src] = target
+                    break
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        if "代码" not in df.columns:
+            positional = {
                 df.columns[index]: column_name
                 for index, column_name in self.COLUMN_MAPPING.items()
                 if index < len(df.columns)
             }
-            df = df.rename(columns=rename_map)
+            df = df.rename(columns=positional)
 
         missing_columns = [column for column in self.REQUIRED_COLUMNS if column not in df.columns]
         if missing_columns:
@@ -237,6 +269,7 @@ class DynamicStockSelector:
         df = df.dropna(subset=numeric_columns).copy()
         df["振幅"] = np.where(df["昨收"] > 0, (df["最高"] - df["最低"]) / df["昨收"] * 100, 0)
         df["is_chinext"] = df["代码"].astype(str).str.startswith(("sz300", "sz301", "300", "301"))
+        df.attrs["snapshot_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return df
 
     def run_strategy(self, strategy_id: str, exclude_list: list[str] | None = None, round_num: int = 1) -> list[dict]:
