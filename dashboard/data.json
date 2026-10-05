@@ -1,0 +1,11 @@
+{
+  "updated_at": "2026-10-05",
+  "data_freshness": "仅历史基线；等待新鲜盘面/成交数据",
+  "market_state": "M0",
+  "market_note": "未载入当日有效市场数据，不生成交易型动作",
+  "holding_risk_count": null,
+  "week_violations": null,
+  "experiment_done": 0,
+  "experiment_total": 20,
+  "actions": []
+}
