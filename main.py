@@ -56,6 +56,7 @@ class DynamicStockSelector:
         "tail_strength": "尾盘强势",
         "10x_stock": "10倍股潜力",
         "sector_leaders": "板块龙头",
+        "adaptive_multifactor": "自适应多因子主策略",
     }
 
     DEFAULT_WEIGHTS = {
@@ -65,6 +66,7 @@ class DynamicStockSelector:
         "tail_strength": {"price_change": 0.5, "turnover": 0.3, "amplitude": 0.2},
         "10x_stock": {"price_level": 0.3, "turnover": 0.4, "price_change": 0.3},
         "sector_leaders": {"turnover": 0.4, "price_change": 0.4, "amplitude": 0.2},
+        "adaptive_multifactor": {"trend": 0.24, "momentum": 0.22, "volume": 0.14, "liquidity": 0.10, "volatility": 0.10, "position": 0.08, "size": 0.07, "intraday": 0.05},
     }
 
     def __init__(self, config_file: str | None = None):
@@ -90,6 +92,7 @@ class DynamicStockSelector:
             "sector_leaders": lambda params, exclude, round_num: self._run_basic_strategy(
                 "sector_leaders", params, self._calculate_leader_score, exclude, round_num, chinext_only=False
             ),
+            "adaptive_multifactor": self._adaptive_multifactor_selection,
         }
 
     def _load_config(self, config_file: str | None = None) -> dict:
@@ -113,7 +116,8 @@ class DynamicStockSelector:
                 {"id": "noon_rush", "name": "午间抢筹策略", "enabled": True},
                 {"id": "tail_strength", "name": "尾盘强势策略", "enabled": True},
                 {"id": "10x_stock", "name": "10倍股潜力策略", "enabled": True},
-                {"id": "sector_leaders", "name": "板块龙头策略", "enabled": True},
+                {"id": "sector_leaders", "name": "板块龙头策略", "enabled": False},
+                {"id": "adaptive_multifactor", "name": "自适应多因子主策略", "enabled": True},
             ],
             "high_freq": {
                 "price_min": 5,
@@ -212,7 +216,21 @@ class DynamicStockSelector:
         if missing_columns:
             raise ValueError(f"股票数据缺少必要字段: {', '.join(missing_columns)}")
 
+        # 尽量保留行情源中的附加字段，供多因子主策略使用。
+        optional_aliases = {
+            "换手率": ["换手率"], "量比": ["量比"], "总市值": ["总市值"],
+            "流通市值": ["流通市值"], "市盈率-动态": ["市盈率-动态", "动态市盈率"],
+            "市净率": ["市净率"],
+        }
+        for target, candidates in optional_aliases.items():
+            if target not in df.columns:
+                for src in candidates:
+                    if src in df.columns:
+                        df[target] = df[src]
+                        break
+
         numeric_columns = ["最新价", "涨跌幅", "成交额", "昨收", "最高", "最低"]
+        numeric_columns += [c for c in optional_aliases if c in df.columns]
         for column in numeric_columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
@@ -336,6 +354,218 @@ class DynamicStockSelector:
         result = self._build_result(result_df, "10倍股潜力", round_num, score_column="潜力评分", include_amplitude=False)
 
         print(f"本轮选出 {len(result)} 只潜力股")
+        return result
+
+    def _market_regime(self) -> str:
+        """用全市场横截面判断风险环境：risk_on / neutral / risk_off。"""
+        if self.stock_data is None or self.stock_data.empty:
+            return "neutral"
+        df = self.stock_data
+        adv = (df["涨跌幅"] > 0).mean()
+        strong = (df["涨跌幅"] >= 2).mean()
+        weak = (df["涨跌幅"] <= -2).mean()
+        if adv >= 0.58 and strong >= weak * 1.15:
+            return "risk_on"
+        if adv <= 0.42 and weak >= strong * 1.15:
+            return "risk_off"
+        return "neutral"
+
+    @staticmethod
+    def _hist_symbol(code: str) -> str:
+        code = str(code).lower().replace("sh", "").replace("sz", "")
+        return code.zfill(6)
+
+    def _fetch_hist_features(self, code: str, lookback_days: int = 90) -> dict:
+        """取日线历史特征。失败时返回空字典，不用旧数据冒充。"""
+        try:
+            end = datetime.datetime.now().strftime("%Y%m%d")
+            start = (datetime.datetime.now() - datetime.timedelta(days=lookback_days * 2)).strftime("%Y%m%d")
+            h = ak.stock_zh_a_hist(
+                symbol=self._hist_symbol(code),
+                period="daily",
+                start_date=start,
+                end_date=end,
+                adjust="qfq",
+            )
+            if h is None or len(h) < 25:
+                return {}
+            h = h.tail(lookback_days).copy()
+            for c in ["收盘", "最高", "最低", "成交量", "成交额"]:
+                if c in h.columns:
+                    h[c] = pd.to_numeric(h[c], errors="coerce")
+            h = h.dropna(subset=["收盘"])
+            if len(h) < 25:
+                return {}
+
+            close = h["收盘"]
+            ret5 = (close.iloc[-1] / close.iloc[-6] - 1) * 100 if len(close) >= 6 else np.nan
+            ret20 = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else np.nan
+            ret60 = (close.iloc[-1] / close.iloc[-61] - 1) * 100 if len(close) >= 61 else np.nan
+
+            ma5 = close.tail(5).mean()
+            ma20 = close.tail(20).mean()
+            ma60 = close.tail(60).mean() if len(close) >= 60 else np.nan
+            trend_stack = float(ma5 > ma20) + (float(ma20 > ma60) if not pd.isna(ma60) else 0.0)
+
+            high20 = h["最高"].tail(20).max() if "最高" in h.columns else close.tail(20).max()
+            position20 = close.iloc[-1] / high20 if high20 else 0
+
+            if {"最高", "最低"}.issubset(h.columns):
+                prev = close.shift(1)
+                tr = pd.concat([
+                    h["最高"] - h["最低"],
+                    (h["最高"] - prev).abs(),
+                    (h["最低"] - prev).abs(),
+                ], axis=1).max(axis=1)
+                atr14 = tr.tail(14).mean()
+                atr_pct = atr14 / close.iloc[-1] * 100 if close.iloc[-1] else np.nan
+            else:
+                atr_pct = np.nan
+
+            vol_ratio20 = np.nan
+            if "成交量" in h.columns and len(h) >= 21:
+                base = h["成交量"].iloc[-21:-1].mean()
+                if base and not pd.isna(base):
+                    vol_ratio20 = h["成交量"].iloc[-1] / base
+
+            return {
+                "ret5": ret5, "ret20": ret20, "ret60": ret60,
+                "trend_stack": trend_stack, "position20": position20,
+                "atr_pct": atr_pct, "vol_ratio20": vol_ratio20,
+            }
+        except Exception:
+            return {}
+
+    def _adaptive_multifactor_selection(self, params: dict, exclude_list: list[str] | None = None, round_num: int = 1) -> list[dict]:
+        """
+        主策略：两级漏斗。
+        1) 横截面快速预筛：流动性/价格/涨幅/市值/非ST。
+        2) 对较小候选池补历史趋势、5/20/60日动量、量能、ATR，再按市场状态动态加权。
+        """
+        print("执行自适应多因子主策略...")
+        df = self.stock_data.copy()
+
+        # 基础可交易性过滤
+        name = df["名称"].astype(str)
+        mask = (
+            ~name.str.contains("ST|退", case=False, regex=True)
+            & (df["最新价"] >= params.get("price_min", 4))
+            & (df["最新价"] <= params.get("price_max", 180))
+            & (df["成交额"] >= params.get("turnover_min", 200000000))
+            & (df["涨跌幅"] >= params.get("change_min", -3.5))
+            & (df["涨跌幅"] <= params.get("change_max", 7.5))
+        )
+        if "总市值" in df.columns:
+            cap_min = params.get("market_cap_min", 10000000000)
+            cap_max = params.get("market_cap_max", 50000000000)
+            cap = pd.to_numeric(df["总市值"], errors="coerce")
+            mask &= cap.between(cap_min, cap_max)
+
+        pool = df[mask].copy()
+        if exclude_list:
+            pool = pool[~pool["代码"].isin(exclude_list)]
+        if pool.empty:
+            return []
+
+        # 一级快筛：成交额 + 温和动量 + 换手/量比（如果数据源提供）
+        pool["pre_score"] = (
+            self._normalize_score(np.log1p(pool["成交额"])) * 0.45
+            + (100 - (pool["涨跌幅"] - params.get("ideal_change", 2.5)).abs() * 12).clip(0,100) * 0.30
+            + self._normalize_score(pool["振幅"].clip(0, 12)) * 0.10
+        )
+        if "量比" in pool.columns:
+            vr = pd.to_numeric(pool["量比"], errors="coerce").fillna(1.0).clip(0, 4)
+            pool["pre_score"] += self._normalize_score(vr) * 0.10
+        if "换手率" in pool.columns:
+            tor = pd.to_numeric(pool["换手率"], errors="coerce").fillna(0).clip(0, 20)
+            # 不是越高越好，5%-12%左右更适合短线流动性与不过热的平衡
+            pool["pre_score"] += (100 - (tor - 8).abs() * 9).clip(0,100) * 0.05
+
+        pre_count = int(params.get("prefilter_count", 80))
+        pool = pool.nlargest(min(pre_count, len(pool)), "pre_score").copy()
+
+        # 二级补历史特征
+        feats = []
+        for code in pool["代码"]:
+            f = self._fetch_hist_features(code, int(params.get("history_lookback", 90)))
+            feats.append(f)
+        feat_df = pd.DataFrame(feats, index=pool.index)
+        for col in ["ret5","ret20","ret60","trend_stack","position20","atr_pct","vol_ratio20"]:
+            pool[col] = feat_df[col] if col in feat_df else np.nan
+
+        coverage = pool["ret20"].notna().mean()
+        if coverage < params.get("min_history_coverage", 0.55):
+            print(f"历史特征覆盖率仅 {coverage:.0%}，主策略停止输出，避免用残缺数据硬选。")
+            return []
+
+        regime = self._market_regime()
+        weights = dict(self._score_weights("adaptive_multifactor"))
+        if regime == "risk_on":
+            weights["momentum"] += 0.05
+            weights["volatility"] -= 0.03
+            weights["position"] -= 0.02
+        elif regime == "risk_off":
+            weights["momentum"] -= 0.05
+            weights["volatility"] += 0.05
+            weights["position"] += 0.02
+
+        # 因子分数
+        trend = (pool["trend_stack"].fillna(0) / 2 * 100).clip(0,100)
+        # 5日防止追高，20日为主，60日确认中期方向
+        mom5 = (100 - (pool["ret5"].fillna(0) - 4).abs() * 10).clip(0,100)
+        mom20 = (pool["ret20"].fillna(-20) * 3 + 50).clip(0,100)
+        mom60 = (pool["ret60"].fillna(0) * 1.5 + 50).clip(0,100)
+        momentum = mom5 * 0.25 + mom20 * 0.50 + mom60 * 0.25
+
+        volr = pool["vol_ratio20"].fillna(1.0).clip(0,4)
+        volume = (100 - (volr - 1.5).abs() * 45).clip(0,100)
+        liquidity = self._normalize_score(np.log1p(pool["成交额"]))
+
+        atr = pool["atr_pct"].fillna(pool["atr_pct"].median()).fillna(4.0)
+        # 短线偏好有波动但不极端：约2.5%-5.5%
+        volatility = (100 - (atr - 4.0).abs() * 20).clip(0,100)
+
+        pos = pool["position20"].fillna(0.8)
+        # 接近20日高点但不要求贴着涨停：0.90~0.99更优
+        position = (100 - (pos - 0.95).abs() * 500).clip(0,100)
+
+        intraday = (100 - (pool["涨跌幅"] - params.get("ideal_change", 2.5)).abs() * 14).clip(0,100)
+
+        if "总市值" in pool.columns:
+            cap = pd.to_numeric(pool["总市值"], errors="coerce")
+            ideal_cap = params.get("ideal_market_cap", 25000000000)
+            size = (100 - ((cap - ideal_cap).abs() / max(ideal_cap,1) * 70)).clip(0,100).fillna(50)
+        else:
+            size = pd.Series(50,index=pool.index)
+
+        pool["评分"] = (
+            trend * weights["trend"]
+            + momentum * weights["momentum"]
+            + volume * weights["volume"]
+            + liquidity * weights["liquidity"]
+            + volatility * weights["volatility"]
+            + position * weights["position"]
+            + size * weights["size"]
+            + intraday * weights["intraday"]
+        )
+
+        # 硬性风险扣分：追高、过度波动、趋势破坏
+        pool.loc[pool["涨跌幅"] > params.get("chase_penalty_from", 5.5), "评分"] -= 12
+        pool.loc[pool["atr_pct"] > params.get("atr_max", 7.5), "评分"] -= 10
+        pool.loc[pool["ret20"] < params.get("ret20_min", -3), "评分"] -= 15
+        pool.loc[pool["trend_stack"] < 1, "评分"] -= 12
+
+        selected = pool.nlargest(int(params.get("selection_count", 5)), "评分")
+        result = self._build_result(selected, "自适应多因子主策略", round_num, score_column="评分")
+        for item, (_, row) in zip(result, selected.iterrows()):
+            item["市场状态"] = regime
+            item["5日强度"] = None if pd.isna(row["ret5"]) else round(float(row["ret5"]),2)
+            item["20日强度"] = None if pd.isna(row["ret20"]) else round(float(row["ret20"]),2)
+            item["60日强度"] = None if pd.isna(row["ret60"]) else round(float(row["ret60"]),2)
+            item["ATR%"] = None if pd.isna(row["atr_pct"]) else round(float(row["atr_pct"]),2)
+            item["量能比"] = None if pd.isna(row["vol_ratio20"]) else round(float(row["vol_ratio20"]),2)
+            item["20日位置"] = None if pd.isna(row["position20"]) else round(float(row["position20"]),3)
+        print(f"主策略输出 {len(result)} 只；市场状态={regime}；历史覆盖={coverage:.0%}")
         return result
 
     def _build_result(
