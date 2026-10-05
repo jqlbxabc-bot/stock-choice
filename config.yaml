@@ -6,26 +6,30 @@ strategies:
   - id: "high_freq"
     name: "低吸潜伏策略"
     description: "适合高频交易，寻找振幅大、成交活跃的创业板股票"
-    enabled: true
+    enabled: false
   - id: "momentum_breakout"
     name: "动量突破策略"
     description: "寻找突破关键阻力位、放量上涨的股票"
-    enabled: true
+    enabled: false
   - id: "noon_rush"
     name: "午间抢筹策略"
     description: "午间时段资金流入明显的股票"
-    enabled: true
+    enabled: false
   - id: "tail_strength"
     name: "尾盘强势策略"
     description: "尾盘表现强势、资金流入的股票"
-    enabled: true
+    enabled: false
   - id: "10x_stock"
     name: "10倍股潜力策略"
     description: "寻找具有长期成长潜力的优质股票"
-    enabled: true
+    enabled: false
   - id: "sector_leaders"
     name: "板块龙头策略"
     description: "各行业板块的龙头股票"
+    enabled: false
+  - id: "adaptive_multifactor"
+    name: "自适应多因子主策略"
+    description: "两级漏斗：流动性/市值预筛 + 趋势/5-20-60日强度/量能/ATR/位置/市场状态动态加权"
     enabled: true
 
 # 高频交易选股参数（低吸潜伏）
@@ -172,3 +176,37 @@ scoring_weights:
     price_level: 0.3
     turnover: 0.4
     price_change: 0.3
+  adaptive_multifactor:
+    trend: 0.24
+    momentum: 0.22
+    volume: 0.14
+    liquidity: 0.10
+    volatility: 0.10
+    position: 0.08
+    size: 0.07
+    intraday: 0.05
+
+# 自适应多因子主策略（默认主策略）
+adaptive_multifactor:
+  price_min: 4
+  price_max: 180
+  turnover_min: 200000000
+  change_min: -3.5
+  change_max: 7.5
+
+  # 偏好100-500亿元市值，中心约250亿元
+  market_cap_min: 10000000000
+  market_cap_max: 50000000000
+  ideal_market_cap: 25000000000
+
+  # 两级漏斗
+  prefilter_count: 80
+  selection_count: 5
+  history_lookback: 90
+  min_history_coverage: 0.55
+
+  # 短线不追极端强势
+  ideal_change: 2.5
+  chase_penalty_from: 5.5
+  atr_max: 7.5
+  ret20_min: -3.0
